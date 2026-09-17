@@ -1,0 +1,219 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish a GitHub Release'
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release Tag (leave empty to use v<version> from package.json)'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine Release Tag & Version
+        id: vars
+        run: |
+          APP_VERSION=$(node -p "require('./package.json').version")
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            TAG_NAME="${{ inputs.release_tag }}"
+          else
+            TAG_NAME="v$APP_VERSION"
+          fi
+          echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
+          echo "Release tag will be: $TAG_NAME"
+
+      - name: Configure Signing Credentials
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS_SECRET: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS_SECRET: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEY_BASE64" ]; then
+            echo "Using custom keystore from repository secrets..."
+            echo "$SIGNING_KEY_BASE64" | base64 -d > release.keystore
+            KEY_STORE_PASS="$KEYSTORE_PASS_SECRET"
+            KEY_AL="$KEY_ALIAS_SECRET"
+            KEY_PW="${KEY_PASS_SECRET:-$KEYSTORE_PASS_SECRET}"
+          else
+            echo "No custom keystore found in secrets. Generating CI release keystore..."
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias mathraga-release \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass mathraga123 \
+              -keypass mathraga123 \
+              -dname "CN=Mathraga, OU=CI, O=Mathraga, L=City, S=State, C=US"
+            KEY_STORE_PASS="mathraga123"
+            KEY_AL="mathraga-release"
+            KEY_PW="mathraga123"
+          fi
+
+          echo "KEYSTORE_PASS=$KEY_STORE_PASS" >> $GITHUB_ENV
+          echo "KEY_ALIAS=$KEY_AL" >> $GITHUB_ENV
+          echo "KEY_PASS=$KEY_PW" >> $GITHUB_ENV
+
+          cat <<EOF > credentials.json
+          {
+            "android": {
+              "keystore": {
+                "keystorePath": "release.keystore",
+                "keystorePassword": "$KEY_STORE_PASS",
+                "keyAlias": "$KEY_AL",
+                "keyPassword": "$KEY_PW"
+              }
+            }
+          }
+          EOF
+
+      - name: Generate Android Native Project
+        run: npx expo prebuild --platform android --clean
+        env:
+          EXPO_NO_TELEMETRY: 1
+
+      - name: Inject EAS Gradle Script for Credentials Support
+        run: |
+          node -e '
+          const fs = require("fs");
+          const path = "./android/app/build.gradle";
+          if (fs.existsSync(path)) {
+            let content = fs.readFileSync(path, "utf8");
+            const script = `
+          // EAS credentials integration
+          import java.nio.file.Paths
+          android.signingConfigs.release {
+            def credentialsJson = rootProject.file("../credentials.json")
+            if (credentialsJson.exists()) {
+              def credentials = new groovy.json.JsonSlurper().parse(credentialsJson)
+              def keystorePath = Paths.get(credentials.android.keystore.keystorePath)
+              def storeFilePath = keystorePath.isAbsolute() ? keystorePath : rootProject.file("..").toPath().resolve(keystorePath)
+              storeFile storeFilePath.toFile()
+              storePassword credentials.android.keystore.keystorePassword
+              keyAlias credentials.android.keystore.keyAlias
+              keyPassword credentials.android.keystore.keyPassword
+            }
+          }
+          android.buildTypes.release {
+            signingConfig android.signingConfigs.release
+          }
+          `;
+            if (!content.includes("credentialsJson")) {
+              content += "\n" + script;
+              fs.writeFileSync(path, content, "utf8");
+              console.log("Injected signing configuration into android/app/build.gradle");
+            }
+          }
+          '
+
+      - name: Build Android Release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Stage & Verify APK
+        run: |
+          BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          echo "Using Android Build Tools from: $BUILD_TOOLS"
+
+          SIGNED_APK=$(find android/app/build/outputs/apk/release -type f -name "*.apk" ! -name "*unsigned*.apk" | head -n 1)
+          UNSIGNED_APK=$(find android/app/build/outputs/apk/release -type f -name "*unsigned*.apk" | head -n 1)
+
+          if [ -n "$SIGNED_APK" ]; then
+            echo "Found signed APK: $SIGNED_APK"
+            cp "$SIGNED_APK" mathraga.apk
+          elif [ -n "$UNSIGNED_APK" ]; then
+            echo "Signing unsigned APK with apksigner: $UNSIGNED_APK"
+            $BUILD_TOOLS/zipalign -p -f 4 "$UNSIGNED_APK" aligned.apk
+            $BUILD_TOOLS/apksigner sign \
+              --ks release.keystore \
+              --ks-key-alias "$KEY_ALIAS" \
+              --ks-pass pass:"$KEYSTORE_PASS" \
+              --key-pass pass:"$KEY_PASS" \
+              --out mathraga.apk aligned.apk
+          else
+            echo "::error::No APK file found in android/app/build/outputs/apk/release"
+            exit 1
+          fi
+
+          echo "Verifying APK signature..."
+          $BUILD_TOOLS/apksigner verify mathraga.apk
+          cp mathraga.apk "mathraga-${{ env.RELEASE_TAG }}.apk"
+          echo "APK staging successful: mathraga.apk and mathraga-${{ env.RELEASE_TAG }}.apk ready"
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mathraga-apk
+          path: mathraga.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.create_release == true || inputs.create_release == 'true'))
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Mathraga ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            mathraga.apk
+            mathraga-${{ env.RELEASE_TAG }}.apk
+
+      - name: Clean sensitive files
+        if: always()
+        run: |
+          rm -f release.keystore credentials.json aligned.apk
+

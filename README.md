@@ -1,6 +1,54 @@
 # Welcome to your Expo app 👋
+# Mathraga 🎵📐
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+[![Download APK](https://img.shields.io/github/v/release/chetanuchiha16/hollow-math?label=Download%20APK&logo=android&color=success)](https://github.com/chetanuchiha16/hollow-math/releases/latest)
+[![Build Status](https://github.com/chetanuchiha16/hollow-math/actions/workflows/release.yml/badge.svg)](https://github.com/chetanuchiha16/hollow-math/actions/workflows/release.yml)
+
+## 📲 Download the App
+
+You can download and install the latest Android release directly from GitHub:
+
+1. Go to the **[Latest Releases](https://github.com/chetanuchiha16/hollow-math/releases/latest)** page.
+2. Under **Assets**, click **`mathraga.apk`** to download it to your Android device.
+3. Open the downloaded `.apk` file on your device and tap **Install** (if prompted, enable "Install unknown apps" in your Android settings).
+
+---
+
+## 🚀 CI / CD & Automated Releases
+
+This repository includes a GitHub Actions pipeline (`.github/workflows/release.yml`) that automatically builds, signs, and publishes the Android APK.
+
+### How to trigger a release:
+
+1. **Tag push (Recommended)**:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+   This automatically creates a new GitHub Release with changelog notes and the attached `mathraga.apk`.
+
+2. **Manual Trigger (GitHub Actions UI)**:
+   - Go to **Actions** -> **Build & Release Android APK**.
+   - Click **Run workflow**, select the branch, and click run.
+
+3. **Every push to `main`**:
+   - Compiles the APK and uploads it to GitHub Actions **Artifacts** for quick testing.
+
+### Optional: Production Signing Key
+
+By default, the workflow generates a self-signed release keystore on the fly in CI so builds succeed with zero setup. To use your own official keystore:
+1. Encode your `.keystore` or `.jks` file to Base64:
+   ```bash
+   base64 -w 0 your-release-key.keystore
+   ```
+2. Add these repository secrets under **Settings > Secrets and variables > Actions**:
+   - `ANDROID_KEYSTORE_BASE64`: Base64 string of your keystore
+   - `ANDROID_KEYSTORE_PASSWORD`: Keystore password
+   - `ANDROID_KEY_ALIAS`: Key alias
+   - `ANDROID_KEY_PASSWORD`: Key password
+
+---
 
 ## Get started
 
