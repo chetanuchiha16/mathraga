@@ -1,7 +1,5 @@
-# Welcome to your Expo app 👋
 # Mathraga 🎵📐
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 [![Download APK](https://img.shields.io/github/v/release/chetanuchiha16/hollow-math?label=Download%20APK&logo=android&color=success)](https://github.com/chetanuchiha16/hollow-math/releases/latest)
 [![Build Status](https://github.com/chetanuchiha16/hollow-math/actions/workflows/release.yml/badge.svg)](https://github.com/chetanuchiha16/hollow-math/actions/workflows/release.yml)
 

@@ -60,6 +60,7 @@ jobs:
         run: |
           APP_VERSION=$(node -p "require('./package.json').version")
           echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
+          echo "version=$APP_VERSION" >> $GITHUB_OUTPUT
 
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG_NAME="${{ github.ref_name }}"
@@ -69,9 +70,11 @@ jobs:
             TAG_NAME="v$APP_VERSION"
           fi
           echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "Release tag will be: $TAG_NAME"
 
       - name: Configure Signing Credentials
+      - name: Check for Custom Signing Keystore
         env:
           SIGNING_KEY_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASS_SECRET: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -80,10 +83,15 @@ jobs:
         run: |
           if [ -n "$SIGNING_KEY_BASE64" ]; then
             echo "Using custom keystore from repository secrets..."
+            echo "Custom signing keystore found in repository secrets."
             echo "$SIGNING_KEY_BASE64" | base64 -d > release.keystore
             KEY_STORE_PASS="$KEYSTORE_PASS_SECRET"
             KEY_AL="$KEY_ALIAS_SECRET"
             KEY_PW="${KEY_PASS_SECRET:-$KEYSTORE_PASS_SECRET}"
+            echo "CUSTOM_SIGNING=true" >> $GITHUB_ENV
+            echo "KEYSTORE_PASS=$KEYSTORE_PASS_SECRET" >> $GITHUB_ENV
+            echo "KEY_ALIAS=$KEY_ALIAS_SECRET" >> $GITHUB_ENV
+            echo "KEY_PASS=${KEY_PASS_SECRET:-$KEYSTORE_PASS_SECRET}" >> $GITHUB_ENV
           else
             echo "No custom keystore found in secrets. Generating CI release keystore..."
             keytool -genkeypair -v \
@@ -98,7 +106,14 @@ jobs:
             KEY_STORE_PASS="mathraga123"
             KEY_AL="mathraga-release"
             KEY_PW="mathraga123"
+            echo "No custom signing keystore provided. Using standard signed release APK."
+            echo "CUSTOM_SIGNING=false" >> $GITHUB_ENV
           fi
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS_SECRET: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS_SECRET: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS_SECRET: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
           echo "KEYSTORE_PASS=$KEY_STORE_PASS" >> $GITHUB_ENV
           echo "KEY_ALIAS=$KEY_AL" >> $GITHUB_ENV
@@ -164,6 +179,13 @@ jobs:
 
       - name: Stage & Verify APK
         run: |
+          APK_FILE=$(find android/app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "::error::No APK file found in android/app/build/outputs/apk/release"
+            exit 1
+          fi
+          echo "Found APK from Gradle: $APK_FILE"
+
           BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
           echo "Using Android Build Tools from: $BUILD_TOOLS"
 
@@ -176,6 +198,13 @@ jobs:
           elif [ -n "$UNSIGNED_APK" ]; then
             echo "Signing unsigned APK with apksigner: $UNSIGNED_APK"
             $BUILD_TOOLS/zipalign -p -f 4 "$UNSIGNED_APK" aligned.apk
+          if [ "$CUSTOM_SIGNING" = "true" ]; then
+            echo "Signing APK with custom production keystore..."
+            # Strip default debug signature
+            zip -d "$APK_FILE" "META-INF/*" || true
+            # Align before signing
+            $BUILD_TOOLS/zipalign -f -p 4 "$APK_FILE" aligned.apk
+            # Sign with custom keystore
             $BUILD_TOOLS/apksigner sign \
               --ks release.keystore \
               --ks-key-alias "$KEY_ALIAS" \
@@ -185,12 +214,17 @@ jobs:
           else
             echo "::error::No APK file found in android/app/build/outputs/apk/release"
             exit 1
+            echo "Using default signed release APK..."
+            cp "$APK_FILE" mathraga.apk
           fi
 
           echo "Verifying APK signature..."
           $BUILD_TOOLS/apksigner verify mathraga.apk
+          $BUILD_TOOLS/apksigner verify --verbose mathraga.apk
           cp mathraga.apk "mathraga-${{ env.RELEASE_TAG }}.apk"
           echo "APK staging successful: mathraga.apk and mathraga-${{ env.RELEASE_TAG }}.apk ready"
+          cp mathraga.apk "mathraga-${{ steps.vars.outputs.tag }}.apk"
+          echo "APK staging successful: mathraga.apk and mathraga-${{ steps.vars.outputs.tag }}.apk ready"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -205,15 +239,19 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Mathraga ${{ env.RELEASE_TAG }}
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: Mathraga ${{ steps.vars.outputs.tag }}
           generate_release_notes: true
           draft: false
           prerelease: false
           files: |
             mathraga.apk
             mathraga-${{ env.RELEASE_TAG }}.apk
+            mathraga-${{ steps.vars.outputs.tag }}.apk
 
       - name: Clean sensitive files
         if: always()
         run: |
           rm -f release.keystore credentials.json aligned.apk
+          rm -f release.keystore aligned.apk
 
