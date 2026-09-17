@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { getQuestionPrompt } from '@/engine/questionGenerator';
 import { SKILL_NAMES } from '@/engine/skills';
 import { summarizeAttempts } from '@/engine/statistics';
 import { useTrainer } from '@/hooks/useTrainer';
@@ -135,11 +134,11 @@ export default function TrainerScreen() {
     );
   }
 
-  const questionPrompt = trainer.currentQuestion ? getQuestionPrompt(trainer.currentQuestion) : '';
   const dailyProgress = Math.min(
     1,
     trainer.state.streak.dailyQuestionsAnswered / trainer.state.streak.dailyGoal,
   );
+  const warmupBars = Math.min(5, trainer.state.streak.dailyQuestionsAnswered);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -181,6 +180,7 @@ export default function TrainerScreen() {
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${dailyProgress * 100}%` }]} />
             </View>
+            <WarmupMeter completed={warmupBars} />
           </View>
 
           <Pressable
@@ -194,7 +194,7 @@ export default function TrainerScreen() {
                 : getSkillLabel(trainer.selectedSkill)}
             </Text>
 
-            <Text style={styles.questionText}>{questionPrompt}</Text>
+            {trainer.currentQuestion ? <StackedQuestion question={trainer.currentQuestion} /> : null}
 
             <View style={styles.inputWrap}>
               <TextInput
@@ -202,10 +202,16 @@ export default function TrainerScreen() {
                 value={trainer.answer}
                 onChangeText={trainer.setAnswer}
                 onSubmitEditing={trainer.submit}
+                onKeyPress={({ nativeEvent }) => {
+                  if (nativeEvent.key === 'Escape') {
+                    trainer.showHint();
+                  }
+                }}
                 style={styles.answerInput}
                 keyboardAppearance="dark"
                 keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'numeric'}
                 inputMode="numeric"
+                showSoftInputOnFocus={false}
                 returnKeyType="done"
                 submitBehavior="submit"
                 blurOnSubmit={false}
@@ -249,6 +255,8 @@ export default function TrainerScreen() {
               )}
             </Animated.View>
 
+            <HintPanel hints={trainer.activeHints} />
+
             {trainer.levelUpText ? (
               <Animated.View style={[styles.levelUpPill, { transform: [{ scale: levelScale }] }]}>
                 <Text style={styles.levelUpKicker}>LEVEL UP</Text>
@@ -257,10 +265,132 @@ export default function TrainerScreen() {
             ) : null}
           </Pressable>
 
+          <NumericKeypad
+            onBackspace={() => trainer.setAnswer(trainer.answer.slice(0, -1))}
+            onClear={() => trainer.setAnswer('')}
+            onDigit={(digit) => trainer.setAnswer(`${trainer.answer}${digit}`)}
+            onMinus={() => {
+              trainer.setAnswer(trainer.answer.startsWith('-') ? trainer.answer.slice(1) : `-${trainer.answer}`);
+            }}
+            onSubmit={trainer.submit}
+          />
+
           <RecentAnswers records={trainer.recentAnswers.slice(0, 3)} />
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+function StackedQuestion({ question }: { question: NonNullable<ReturnType<typeof useTrainer>['currentQuestion']> }) {
+  const symbol = {
+    add: '+',
+    subtract: '-',
+    multiply: '×',
+    divide: '÷',
+  }[question.operation];
+
+  return (
+    <View style={styles.stackedQuestion} accessibilityLabel={`${question.num1} ${symbol} ${question.num2}`}>
+      <Text style={styles.stackedTop}>{question.num1}</Text>
+      <View style={styles.stackedBottomRow}>
+        <Text style={styles.stackedOperator}>{symbol}</Text>
+        <Text style={styles.stackedBottom}>{question.num2}</Text>
+      </View>
+      <View style={styles.stackedRule} />
+    </View>
+  );
+}
+
+function HintPanel({ hints }: { hints: string[] }) {
+  if (hints.length === 0) return <View style={styles.hintPlaceholder} />;
+
+  return (
+    <View style={styles.hintPanel}>
+      <Text style={styles.hintTitle}>Mental path</Text>
+      {hints.map((hint) => (
+        <Text key={hint} style={styles.hintText}>
+          {hint}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+function WarmupMeter({ completed }: { completed: number }) {
+  return (
+    <View style={styles.warmupWrap} accessibilityLabel={`${completed} of 5 warmup bars complete`}>
+      {[0, 1, 2, 3, 4].map((bar) => (
+        <View key={bar} style={[styles.warmupBar, bar < completed && styles.warmupBarActive]} />
+      ))}
+    </View>
+  );
+}
+
+function NumericKeypad({
+  onBackspace,
+  onClear,
+  onDigit,
+  onMinus,
+  onSubmit,
+}: {
+  onBackspace: () => void;
+  onClear: () => void;
+  onDigit: (digit: string) => void;
+  onMinus: () => void;
+  onSubmit: () => void;
+}) {
+  const rows = [
+    ['7', '8', '9'],
+    ['4', '5', '6'],
+    ['1', '2', '3'],
+  ];
+
+  return (
+    <View style={styles.keypad}>
+      {rows.map((row) => (
+        <View key={row.join('')} style={styles.keypadRow}>
+          {row.map((digit) => (
+            <KeypadButton key={digit} label={digit} onPress={() => onDigit(digit)} />
+          ))}
+        </View>
+      ))}
+      <View style={styles.keypadRow}>
+        <KeypadButton label="-" onPress={onMinus} />
+        <KeypadButton label="0" onPress={() => onDigit('0')} />
+        <KeypadButton label="⌫" onPress={onBackspace} />
+      </View>
+      <View style={styles.keypadRow}>
+        <KeypadButton label="Clear" onPress={onClear} wide />
+        <KeypadButton label="Done" onPress={onSubmit} accent wide />
+      </View>
+    </View>
+  );
+}
+
+function KeypadButton({
+  accent,
+  label,
+  onPress,
+  wide,
+}: {
+  accent?: boolean;
+  label: string;
+  onPress: () => void;
+  wide?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.keypadButton,
+        wide && styles.keypadButtonWide,
+        accent && styles.keypadButtonAccent,
+        pressed && styles.keypadButtonPressed,
+      ]}>
+      <Text style={[styles.keypadButtonText, accent && styles.keypadButtonTextAccent]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -354,6 +484,7 @@ function StatsScreen({
           <StatTile label="Questions" value={String(trainer.state.aggregates.totalAnswered)} />
           <StatTile label="Accuracy" value={`${trainer.visibleAccuracy}%`} />
           <StatTile label="Median" value={medianTime ? formatSeconds(medianTime) : '0.00s'} />
+          <StatTile label="Mental Load" value={String(trainer.state.aggregates.totalMentalLoad)} />
           <StatTile label="Best streak" value={String(trainer.state.streak.longestStreak)} />
         </View>
 
@@ -562,12 +693,27 @@ const styles = StyleSheet.create({
     borderRadius: 99,
     backgroundColor: palette.success,
   },
+  warmupWrap: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  warmupBar: {
+    width: 34,
+    height: 5,
+    borderRadius: 99,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  warmupBarActive: {
+    backgroundColor: palette.warning,
+  },
   questionArea: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 20,
-    minHeight: 350,
+    paddingVertical: 14,
+    minHeight: 320,
   },
   skillContext: {
     color: palette.secondaryText,
@@ -575,12 +721,43 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginBottom: 12,
   },
-  questionText: {
+  stackedQuestion: {
+    minWidth: 190,
+    alignItems: 'stretch',
+  },
+  stackedTop: {
     color: palette.text,
-    fontSize: 62,
-    lineHeight: 74,
+    fontSize: 58,
+    lineHeight: 64,
     fontWeight: '900',
-    textAlign: 'center',
+    textAlign: 'right',
+    fontVariant: ['tabular-nums'],
+  },
+  stackedBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'flex-end',
+    gap: 18,
+  },
+  stackedOperator: {
+    color: palette.secondaryText,
+    fontSize: 42,
+    lineHeight: 50,
+    fontWeight: '900',
+  },
+  stackedBottom: {
+    color: palette.text,
+    fontSize: 58,
+    lineHeight: 64,
+    fontWeight: '900',
+    textAlign: 'right',
+    fontVariant: ['tabular-nums'],
+  },
+  stackedRule: {
+    height: 3,
+    marginTop: 4,
+    borderRadius: 99,
+    backgroundColor: 'rgba(255,255,255,0.42)',
   },
   inputWrap: {
     marginTop: 22,
@@ -617,8 +794,8 @@ const styles = StyleSheet.create({
     shadowColor: palette.error,
   },
   feedbackArea: {
-    minHeight: 88,
-    marginTop: 22,
+    minHeight: 70,
+    marginTop: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -648,6 +825,33 @@ const styles = StyleSheet.create({
   errorText: {
     color: palette.error,
   },
+  hintPlaceholder: {
+    minHeight: 0,
+  },
+  hintPanel: {
+    width: '100%',
+    maxWidth: 360,
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  hintTitle: {
+    color: palette.text,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  hintText: {
+    color: palette.secondaryText,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
   levelUpPill: {
     position: 'absolute',
     bottom: 16,
@@ -676,6 +880,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 9,
+  },
+  keypad: {
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 360,
+    gap: 8,
+    marginBottom: 10,
+  },
+  keypadRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  keypadButton: {
+    flex: 1,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  keypadButtonWide: {
+    flex: 1.5,
+  },
+  keypadButtonAccent: {
+    backgroundColor: 'rgba(48,209,88,0.16)',
+    borderColor: 'rgba(48,209,88,0.30)',
+  },
+  keypadButtonPressed: {
+    opacity: 0.72,
+    transform: [{ scale: 0.98 }],
+  },
+  keypadButtonText: {
+    color: palette.text,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  keypadButtonTextAccent: {
+    color: palette.success,
+    fontSize: 16,
   },
   emptyHistory: {
     color: palette.mutedText,

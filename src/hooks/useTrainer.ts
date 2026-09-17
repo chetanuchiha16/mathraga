@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { selectNextQuestion } from '@/engine/adaptiveSelector';
+import { getMentalMathHints } from '@/engine/hints';
+import { calculateMentalLoad } from '@/engine/mentalLoad';
 import { getQuestionPrompt, getProblemKey } from '@/engine/questionGenerator';
 import { SKILL_IDS } from '@/engine/skills';
 import { updateSkillProgress } from '@/engine/progression';
@@ -17,6 +19,7 @@ type FeedbackState = {
   durationMs: number;
   answer: number;
   levelUpText: string | null;
+  hints: string[];
 } | null;
 
 function sanitizeAnswerInput(value: string) {
@@ -61,6 +64,7 @@ export function useTrainer() {
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [answer, setAnswer] = useState('');
   const [feedback, setFeedback] = useState<FeedbackState>(null);
+  const [activeHints, setActiveHints] = useState<string[]>([]);
   const [recentAnswers, setRecentAnswers] = useState<AnswerRecord[]>([]);
   const [levelUpText, setLevelUpText] = useState<string | null>(null);
   const startTimeRef = useRef(0);
@@ -93,6 +97,7 @@ export function useTrainer() {
       setCurrentQuestion(nextQuestion);
       setAnswer('');
       setFeedback(null);
+      setActiveHints([]);
       startTimeRef.current = performance.now();
     },
     [],
@@ -162,12 +167,15 @@ export function useTrainer() {
 
     const durationMs = performance.now() - startTimeRef.current;
     const correct = userAnswer === currentQuestion.answer;
+    const mentalLoad = calculateMentalLoad(currentQuestion, correct, durationMs);
+    const hints = correct ? [] : getMentalMathHints(currentQuestion);
     const attempt = {
       questionId: currentQuestion.id,
       skill: currentQuestion.skill,
       level: currentQuestion.level,
       correct,
       durationMs,
+      mentalLoad,
       timestamp: Date.now(),
     };
     const answerRecord: AnswerRecord = {
@@ -192,6 +200,7 @@ export function useTrainer() {
       aggregates: {
         totalAnswered: state.aggregates.totalAnswered + 1,
         totalCorrect: state.aggregates.totalCorrect + (correct ? 1 : 0),
+        totalMentalLoad: state.aggregates.totalMentalLoad + mentalLoad,
         recentAttempts: [attempt, ...state.aggregates.recentAttempts].slice(0, MAX_RECENT_ATTEMPTS),
       },
     });
@@ -206,7 +215,8 @@ export function useTrainer() {
 
     setState(withAttempt);
     setRecentAnswers((records) => [answerRecord, ...records].slice(0, 7));
-    setFeedback({ correct, durationMs, answer: currentQuestion.answer, levelUpText: levelUp });
+    setActiveHints(hints);
+    setFeedback({ correct, durationMs, answer: currentQuestion.answer, levelUpText: levelUp, hints });
     setLevelUpText(levelUp);
     persist(withAttempt);
 
@@ -220,12 +230,18 @@ export function useTrainer() {
     }, FEEDBACK_DELAY_MS);
   }, [answer, currentQuestion, feedback, generateNext, persist, state]);
 
+  const showHint = useCallback(() => {
+    if (!currentQuestion) return;
+    setActiveHints(getMentalMathHints(currentQuestion));
+  }, [currentQuestion]);
+
   return {
     answer,
     canTrain,
     changeSkill,
     chooseSkill,
     currentQuestion,
+    activeHints,
     feedback,
     levelUpText,
     loaded,
@@ -235,6 +251,7 @@ export function useTrainer() {
     skillIds: SKILL_IDS,
     state,
     submit,
+    showHint,
     visibleAccuracy,
   };
 }

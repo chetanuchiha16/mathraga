@@ -36,6 +36,7 @@ export type Attempt = {
   level: number;
   correct: boolean;
   durationMs: number;
+  mentalLoad: number;
   timestamp: number;
 };
 
@@ -64,6 +65,7 @@ export type SkillProgress = {
 export type AggregateStats = {
   totalAnswered: number;
   totalCorrect: number;
+  totalMentalLoad: number;
   recentAttempts: Attempt[];
 };
 
