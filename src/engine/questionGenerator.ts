@@ -139,7 +139,54 @@ export function generateQuestion(skill: SkillId, level: number, random: RandomSo
   if (skill === 'multiplication') return generateMultiplication(safeLevel, random);
   return generateDivision(safeLevel, random);
 }
+export function createQuestion(
+  skill: SkillId,
+  level: number,
+  operation: Operation,
+  num1: number,
+  num2: number,
+): Question {
+  const safeLevel = clampLevel(level);
 
+  let answer: number;
+
+  switch (operation) {
+    case 'add':
+      answer = num1 + num2;
+      break;
+
+    case 'subtract':
+      answer = num1 - num2;
+      break;
+
+    case 'multiply':
+      answer = num1 * num2;
+      break;
+
+    case 'divide':
+      answer = num2 === 0 ? 0 : num1 / num2;
+      break;
+
+    default:
+      throw new Error(`Unsupported operation: ${operation}`);
+  }
+
+  return {
+    id: makeQuestionId(
+      skill,
+      safeLevel,
+      operation,
+      num1,
+      num2,
+    ),
+    skill,
+    level: safeLevel,
+    num1,
+    num2,
+    operation,
+    answer,
+  };
+}
 export function getQuestionPrompt(question: Question) {
   const symbol: Record<Operation, string> = {
     add: '+',

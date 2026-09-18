@@ -195,7 +195,12 @@ export function useTrainer() {
       skillProgress,
       problemStats: {
         ...state.problemStats,
-        [problemKey]: updateProblemStats(state.problemStats[problemKey], correct, durationMs),
+        [problemKey]: updateProblemStats(
+          state.problemStats[problemKey],
+          currentQuestion,
+          correct,
+          durationMs,
+        ),
       },
       aggregates: {
         totalAnswered: state.aggregates.totalAnswered + 1,

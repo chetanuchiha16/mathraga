@@ -1,8 +1,16 @@
-export type SkillId = 'addition' | 'subtraction' | 'multiplication' | 'division';
+export type SkillId =
+  | 'addition'
+  | 'subtraction'
+  | 'multiplication'
+  | 'division';
 
 export type SelectedSkill = 'all' | SkillId;
 
-export type Operation = 'add' | 'subtract' | 'multiply' | 'divide';
+export type Operation =
+  | 'add'
+  | 'subtract'
+  | 'multiply'
+  | 'divide';
 
 export type Skill = {
   id: SkillId;
@@ -46,12 +54,37 @@ export type AnswerRecord = Attempt & {
   answer: number;
 };
 
+/**
+ * Per-problem performance history.
+ *
+ * The question details are stored here so the adaptive selector
+ * can reconstruct a previously seen problem directly instead of
+ * waiting for random generation to produce it again.
+ */
 export type ProblemStats = {
   attempts: number;
   correct: number;
+
   recentDurationsMs: number[];
   medianTimeMs: number;
+
   lastSeen: number;
+
+  /**
+   * Problem identity.
+   *
+   * Example:
+   *   skill: 'multiplication'
+   *   level: 1
+   *   num1: 7
+   *   num2: 8
+   *   operation: 'multiply'
+   */
+  skill: SkillId;
+  level: number;
+  num1: number;
+  num2: number;
+  operation: Operation;
 };
 
 export type SkillProgress = {
